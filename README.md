@@ -1,7 +1,3 @@
-# GraspGenforHSR
-
-
-
 # GraspGen2004 — ROS1 wrapper for GraspGen project
 
 This repository contains the implementation of a ROS1 wrapper around the diffusion-based grasping framwork GraspGen <https://github.com/NVlabs/GraspGen>.
@@ -135,6 +131,16 @@ In the Grasping Pipelines config.yaml the _grasppoint_estimator_topic_ needs to 
 
 ### Direct pose estimation
 In grasp_method_selector.py, there might be adaptions neccassary to get `'direct_grasp'` returned as only then the GraspGen-wrapper is called.
+
+
+# GraspGenforHSR
+
+```shell
+rosrun graspgen_grasping hsrb_grasping.py
+```
+
+### Configuration adaption
+In the Grasping Pipelines config.yaml the _grasppoint_estimator_topic_ needs to be set to  `/pose_estimator/find_grasppose_hsrb_graspgen`.
 
 
 
