@@ -1,0 +1,30 @@
+
+_target_: graspsampling.hands.URDFHand
+file_name: assets/toyota_hsr_gripper/hsrb4s.urdf
+grasp_frame: hand_palm_link
+maximum_aperture: 0.135 # HSR max approx. 135mm
+approach_direction: [0., 0., 1.]
+open_configurations:
+  - [0.]
+close_configurations:
+  - [0.7]
+
+# Note this are till the dimensions of robotiq 2f-140, which is similar to HSR's gripper.
+width: 0.13603458 
+depth: 0.195
+
+# Control Points for grasp generation
+closing_regions:
+  - extents: [0.120, 0.03, 0.06] 
+    translation: [0.0, 0.0, 0.065] 
+    rotation_wxyz: [1., 0., 0., 0.]
+
+contact_points:
+  - link_name: hand_l_distal_link
+    location: [-0.01675, -0.0245, 0.0525]
+    normal: [0., 1., 0.]
+  - link_name: hand_r_distal_link
+    location: [-0.01675, 0.0245, 0.0525]  
+    normal: [0., -1., 0.]
+transform_offset_from_asset_to_graspgen_convention: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]] # expressed as translation and quaternion[[xyz],[xyzw]]
+symmetric_antipodal: True
