@@ -19,6 +19,7 @@ from tf.transformations import (
 from pathlib import Path
 import os
 import time
+import scipy
 
 from grasp_gen.grasp_server import GraspGenSampler, load_grasp_cfg
 from grasp_gen.utils.point_cloud_utils import (
@@ -36,6 +37,16 @@ from grasp_gen.utils.meshcat_utils import (
 from grasp_gen.robot import get_gripper_info, import_module_from_path
 
 from robokudo_msgs.msg import GenericImgProcAnnotatorAction, GenericImgProcAnnotatorResult
+
+VISUALIZER_ENABLED = True
+
+GRASP_FILTERING_THRESHOLD = 0.2
+X_MIN_ANGLE = -45
+X_MAX_ANGLE = 0
+Y_MIN_ANGLE = -30
+Y_MAX_ANGLE = 30
+Z_MIN_ANGLE = -180
+Z_MAX_ANGLE = 180
 
 class GraspGenWrapper():
 
@@ -59,7 +70,9 @@ class GraspGenWrapper():
         self.gripper_info = get_gripper_info(self.gripper_name)
         self.gripper_collision_mesh = self.gripper_info.collision_mesh
         
-        self.visualizer = create_visualizer()
+        if VISUALIZER_ENABLED:
+            rospy.logwarn("Make sure your already started MeshCat visualizer before running the GraspGen2004 ROS node")
+            self.visualizer = create_visualizer()
 
         # Depth scale
         self.depth_scale = rospy.get_param("~depth_scale", 1000.0)
@@ -150,11 +163,26 @@ class GraspGenWrapper():
         filtered_grasps = []
         filtered_scores = []
         for i, (grasp, score) in enumerate(zip(grasps, scores)):
-            grasp_approach = grasp[:3, 2]
-            score_front = np.dot(grasp_approach, [0, 0, 1])
-            if score_front >= 0.08:
-                 filtered_grasps.append(grasp)
-                 filtered_scores.append(score)
+            # New scoring apporach with euler angles
+            R = grasp[:3, :3]
+            R_eul = scipy.spatial.transform.Rotation.from_matrix(R).as_euler("XYZ",degrees=True)
+            if ( R_eul[0] > X_MIN_ANGLE
+                and R_eul[0] < X_MAX_ANGLE
+                and R_eul[1] > Y_MIN_ANGLE
+                and R_eul[1] < Y_MAX_ANGLE
+                and R_eul[2] > Z_MIN_ANGLE
+                and R_eul[2] < Z_MAX_ANGLE
+            ):
+                filtered_grasps.append(grasp)
+                filtered_scores.append(score)
+
+            # Old scoring approach with single element in rotation matrix
+            # grasp_approach = grasp[:3, 2]
+            # score_front = np.dot(grasp_approach, [0, 0, 1])
+            # if score_front >= GRASP_FILTERING_THRESHOLD: # 0.08
+            #      filtered_grasps.append(grasp)
+            #      filtered_scores.append(score)
+
         return np.array(filtered_grasps), np.array(filtered_scores)
 
     def get_cam_info(self):
@@ -199,7 +227,7 @@ class GraspGenWrapper():
             pc_sym= self.add_symmetry_hull(pc_filtered)
             pc_sym_sampled = pc_sym[np.random.choice(len(pc_sym), min(15000, len(pc_sym)), replace=False)]
 
-            visualize_pointcloud(self.visualizer, "obj-pc-augmented", pc_sym_sampled)
+            if VISUALIZER_ENABLED: visualize_pointcloud(self.visualizer, "obj-pc-augmented", pc_sym_sampled)
 
             # Grasp inference on augmented PC
             grasps_inferred, grasp_conf_inferred = GraspGenSampler.run_inference(
@@ -254,13 +282,14 @@ class GraspGenWrapper():
                 best_grasp_pose = collision_free_grasps[best_idx]
                 best_score = collision_free_scores[best_idx]
 
+            rospy.loginfo("HSR specific post-processing")
             # Post-processing for HSR
             # 1. Thickness / Z-Offset
             # Use visualizer centering for debug only if needed
             object_center = pc_filtered.mean(axis=0)
             T_center_viz = tra.translation_matrix(-object_center)
-            
-            thickness = self.grasp_thickness(pc_sym_sampled, np.linalg.inv(best_grasp_pose), T_center=T_center_viz, vis=self.visualizer)
+
+            thickness = self.grasp_thickness(pc_sym_sampled, np.linalg.inv(best_grasp_pose), T_center=T_center_viz, vis=(self.visualizer if VISUALIZER_ENABLED else None))
             if thickness is None:
                 thickness = 0.07 # Default
             
@@ -283,55 +312,57 @@ class GraspGenWrapper():
             result.class_names = ['Unknown Object']
             result.success = True
             
-            # Visualization
-            visualize_pointcloud(self.visualizer, "scene", pc_scene, pc_colors_scene)
-            visualize_pointcloud(self.visualizer, "object", pc_object, pc_colors_object)
-                        # Visualize all grasps
-            for i, grasp in enumerate(grasps_inferred[:100]):
-                visualize_grasp(
-                    self.visualizer,
-                    f"grasps/{i:03d}/grasp",
-                    T_center_viz @ grasp,
-                    color=[200,200,200],
-                    gripper_name=self.gripper_name,
-                    linewidth=0.8,
-                )
+            rospy.loginfo("Visualizing grasp poses")
+            if VISUALIZER_ENABLED:
+                # Visualization
+                visualize_pointcloud(self.visualizer, "scene", pc_scene, pc_colors_scene)
+                visualize_pointcloud(self.visualizer, "object", pc_object, pc_colors_object)
+                            # Visualize all grasps
+                for i, grasp in enumerate(grasps_inferred[:100]):
+                    visualize_grasp(
+                        self.visualizer,
+                        f"grasps/{i:03d}/grasp",
+                        T_center_viz @ grasp,
+                        color=[200,200,200],
+                        gripper_name=self.gripper_name,
+                        linewidth=0.8,
+                    )
 
-            # Visualize collision-free grasps
-            for i, grasp in enumerate(collision_free_grasps[:100]):
-                visualize_grasp(
-                    self.visualizer,
-                    f"collision_free_grasps/{i:03d}/grasp",
-                    T_center_viz @ grasp,
-                    color=[0,255,0],
-                    gripper_name=self.gripper_name,
-                    linewidth=0.8,
-                )
-            
-            # Visualize colliding grasps
-            colliding_grasps = grasps_inferred[~collision_free_mask]
-            colliding_scores = grasp_conf_inferred[~collision_free_mask]
-            for i, grasp in enumerate(colliding_grasps[:20]):
-                visualize_grasp(
-                    self.visualizer,
-                    f"colliding_grasps/{i:03d}/grasp",
-                    T_center_viz @ grasp,
-                    color=[255,0,0],
-                    gripper_name=self.gripper_name,
-                    linewidth=0.8,
-                )
+                # Visualize collision-free grasps
+                for i, grasp in enumerate(collision_free_grasps[:100]):
+                    visualize_grasp(
+                        self.visualizer,
+                        f"collision_free_grasps/{i:03d}/grasp",
+                        T_center_viz @ grasp,
+                        color=[0,255,0],
+                        gripper_name=self.gripper_name,
+                        linewidth=0.8,
+                    )
 
-            # Visualize filtered grasps
-            for i, grasp in enumerate(filtered_grasps[:100]):
-                visualize_grasp(
-                    self.visualizer,
-                    f"filtered_grasps/{i:03d}/grasp",
-                    T_center_viz @ grasp,
-                    color=[0,0,255],
-                    gripper_name=self.gripper_name,
-                    linewidth=0.8,
-                )
-            visualize_grasp(self.visualizer, "chosen_grasp", hsr_pose, color=[255, 255, 0], gripper_name=self.gripper_name)
+                # Visualize colliding grasps
+                colliding_grasps = grasps_inferred[~collision_free_mask]
+                colliding_scores = grasp_conf_inferred[~collision_free_mask]
+                for i, grasp in enumerate(colliding_grasps[:20]):
+                    visualize_grasp(
+                        self.visualizer,
+                        f"colliding_grasps/{i:03d}/grasp",
+                        T_center_viz @ grasp,
+                        color=[255,0,0],
+                        gripper_name=self.gripper_name,
+                        linewidth=0.8,
+                    )
+
+                # Visualize filtered grasps
+                for i, grasp in enumerate(filtered_grasps[:100]):
+                    visualize_grasp(
+                        self.visualizer,
+                        f"filtered_grasps/{i:03d}/grasp",
+                        T_center_viz @ grasp,
+                        color=[0,0,255],
+                        gripper_name=self.gripper_name,
+                        linewidth=0.8,
+                    )
+                visualize_grasp(self.visualizer, "chosen_grasp", hsr_pose, color=[255, 255, 0], gripper_name=self.gripper_name)
             
             rospy.loginfo('GraspGen (HSR): Grasp generation successful')
 
