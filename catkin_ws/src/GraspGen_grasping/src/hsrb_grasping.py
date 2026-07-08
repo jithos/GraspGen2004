@@ -207,6 +207,7 @@ class GraspGenWrapper():
             segmentation_mask = ros_numpy.numpify(goal.mask_detections[0])
             rgb = ros_numpy.numpify(goal.rgb)
 
+            rospy.loginfo("Preparing point cloud")
             pc_scene, pc_object, pc_colors_scene, pc_colors_object = depth_and_segmentation_to_point_clouds(
                 depth_image=depth,
                 segmentation_mask=segmentation_mask,
@@ -229,6 +230,7 @@ class GraspGenWrapper():
 
             if VISUALIZER_ENABLED: visualize_pointcloud(self.visualizer, "obj-pc-augmented", pc_sym_sampled)
 
+            rospy.loginfo("Infering grasps")
             # Grasp inference on augmented PC
             grasps_inferred, grasp_conf_inferred = GraspGenSampler.run_inference(
                 pc_sym_sampled,
@@ -247,6 +249,7 @@ class GraspGenWrapper():
             grasps_inferred = grasps_inferred.cpu().numpy()
             grasps_inferred[:, 3, 3] = 1
 
+            rospy.loginfo("Collision filtering")
             # Collision filtering
             if len(pc_scene) > 8192:
                 scene_pc_downsampled = pc_scene[np.random.choice(len(pc_scene), 8192, replace=False)]
@@ -269,6 +272,7 @@ class GraspGenWrapper():
                 result.success = False
                 return
 
+            rospy.loginfo("HSR specific grasp pose filtering")
             # Pose filtering (HSR specific)
             filtered_grasps, filtered_scores = self.filter_grasps_by_pose(collision_free_grasps, collision_free_scores)
             
@@ -301,6 +305,7 @@ class GraspGenWrapper():
             
             hsr_pose = self.align_hsr_camera(hsr_pose)
 
+            rospy.loginfo("Converting to ROS pose")
             # Convert to ROS pose
             pose = Pose()
             pose.position.x, pose.position.y, pose.position.z = hsr_pose[:3, 3]
