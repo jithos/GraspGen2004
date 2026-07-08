@@ -220,8 +220,9 @@ class GraspGenWrapper():
                 remove_object_from_scene=True
             )
 
+            rospy.loginfo("Point cloud outlier removal")
             pc_object_torch = torch.from_numpy(pc_object)
-            pc_filtered, pc_removed = point_cloud_outlier_removal(pc_object_torch, threshold=0.02, K=100)
+            pc_filtered, pc_removed = point_cloud_outlier_removal(pc_object_torch, threshold=0.02, K=20)
             pc_filtered = pc_filtered.numpy()
 
             # Augment PC for better inference
@@ -374,6 +375,7 @@ class GraspGenWrapper():
         except Exception as e:
             rospy.logerr(f"Error in HSRB GraspGenWrapper: {e}")
             result.success = False
+            raise
         finally:
             self.server.set_succeeded(result)
 
